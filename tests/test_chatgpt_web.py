@@ -73,10 +73,51 @@ def test_an_http_error_status_is_unreachable_not_expired():
 
 
 def test_a_html_page_instead_of_json_is_unreachable():
-    page = httpx.Response(200, text="<html><body>Just a moment...</body></html>", headers={"content-type": "text/html"})
+    page = httpx.Response(200, text="<html><body>Scheduled maintenance</body></html>", headers={"content-type": "text/html"})
     with pytest.raises(ChatGPTUnreachable) as err:
         check_with(lambda request: page)
     assert "sent a page" in str(err.value)
+    assert "Scheduled maintenance" in str(err.value)
+
+
+def test_a_bot_protection_block_is_named_and_the_cookie_is_not_blamed():
+    page = httpx.Response(403, text="<html><title>Just a moment...</title></html>", headers={"cf-mitigated": "challenge"})
+    with pytest.raises(ChatGPTUnreachable) as err:
+        check_with(lambda request: page)
+    message = str(err.value)
+    assert "bot protection" in message
+    assert "not judged" in message
+    assert "HTTP 403" in message
+
+
+def test_a_challenge_page_with_status_200_is_also_named_as_bot_protection():
+    page = httpx.Response(200, text="<html><body>Just a moment...</body></html>", headers={"content-type": "text/html"})
+    with pytest.raises(ChatGPTUnreachable) as err:
+        check_with(lambda request: page)
+    assert "bot protection" in str(err.value)
+
+
+SECRET0 = "ZZZZ-secret-part-zero-000111"
+SECRET1 = "YYYY-secret-part-one-222333"
+SECRET_COOKIES = f"__Secure-next-auth.session-token.0={SECRET0}; __Secure-next-auth.session-token.1={SECRET1}"
+
+
+def test_a_refusal_shows_what_chatgpt_said_but_never_the_cookie_values():
+    echo = httpx.Response(403, text=f"forbidden for {SECRET_COOKIES} please retry")
+    with pytest.raises(ChatGPTUnreachable) as err:
+        check_with(lambda request: echo, SECRET_COOKIES)
+    message = str(err.value)
+    assert "HTTP 403" in message
+    assert "forbidden for" in message
+    assert SECRET0 not in message and SECRET1 not in message
+    assert "[cookie]" in message
+
+
+def test_a_long_refusal_is_shortened():
+    long_body = httpx.Response(403, text="x" * 5000)
+    with pytest.raises(ChatGPTUnreachable) as err:
+        check_with(lambda request: long_body)
+    assert len(str(err.value)) < 400
 
 
 def test_an_unexpected_json_shape_is_unreachable():

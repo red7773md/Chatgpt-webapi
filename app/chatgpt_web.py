@@ -10,6 +10,7 @@ Sending messages is not built yet. Those calls raise ChatGPTNotReady until step 
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Any
 
@@ -26,6 +27,39 @@ BROWSER_HEADERS = {
 }
 
 
+MAX_DETAIL_CHARS = 160
+log = logging.getLogger("chatgpt_webui")
+
+
+def _snippet(text: str, cookie_header: str) -> str:
+    """The start of ChatGPT's reply, shortened, with no cookie value in it."""
+    snippet = " ".join(text.split())[:MAX_DETAIL_CHARS]
+    for pair in cookie_header.split(";"):
+        value = pair.partition("=")[2].strip()
+        if len(value) >= 8:
+            snippet = snippet.replace(value, "[cookie]")
+    return snippet
+
+
+def _is_bot_challenge(res: httpx.Response) -> bool:
+    return res.headers.get("cf-mitigated", "").lower() == "challenge" or "just a moment" in res.text.lower()
+
+
+def _refusal(res: httpx.Response, cookie_header: str) -> str:
+    """Say what ChatGPT answered. A bot-protection block is named as one, not blamed on the cookie."""
+    snippet = _snippet(res.text, cookie_header)
+    log.warning("session check refused: HTTP %s, cf-mitigated=%r, reply starts: %r",
+                res.status_code, res.headers.get("cf-mitigated"), snippet)
+    if _is_bot_challenge(res):
+        return (
+            f"ChatGPT's bot protection blocked this server (HTTP {res.status_code}). "
+            "The cookie was not judged, so this is about the server's network, not the cookie."
+        )
+    if snippet:
+        return f'ChatGPT refused the session check with HTTP {res.status_code}. Its reply starts: "{snippet}"'
+    return f"ChatGPT refused the session check with HTTP {res.status_code} and sent no reply."
+
+
 class ChatGPTWebBackend:
     def __init__(self, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self._transport = transport  # tests inject a mock transport
@@ -38,12 +72,15 @@ class ChatGPTWebBackend:
             raise ChatGPTUnreachable(f"Could not reach ChatGPT ({type(exc).__name__}). Try the check again in a moment.") from exc
 
         if res.status_code != 200:
-            raise ChatGPTUnreachable(f"ChatGPT answered HTTP {res.status_code} to the session check. Try again later.")
+            raise ChatGPTUnreachable(_refusal(res, cookie_header))
         try:
             data: Any = res.json()
         except ValueError as exc:
+            if _is_bot_challenge(res):
+                raise ChatGPTUnreachable(_refusal(res, cookie_header)) from exc
+            snippet = _snippet(res.text, cookie_header)
             raise ChatGPTUnreachable(
-                "ChatGPT sent a page instead of the session data. It may be blocking this server; try again later."
+                f'ChatGPT sent a page instead of the session data. It starts: "{snippet}"'
             ) from exc
         if not isinstance(data, dict):
             raise ChatGPTUnreachable("ChatGPT sent an unexpected answer to the session check.")
