@@ -15,11 +15,12 @@ def build_entrypoint(env: Mapping[str, str] | None = None) -> FastAPI:
     try:
         settings = load_settings(env)
     except ConfigError as exc:
+        message = str(exc)  # the except name is cleared when the block ends, so keep the text
         app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
         @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
         async def setup_needed(path: str) -> JSONResponse:
-            return JSONResponse(status_code=503, content={"detail": str(exc)})
+            return JSONResponse(status_code=503, content={"detail": message})
 
         return app
     return create_app(settings)

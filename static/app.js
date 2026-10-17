@@ -122,7 +122,9 @@
   // The line under the session heading: what is saved, and what the last check said.
   function checkLine() {
     const token = state.token || {};
-    if (!token.saved) return el("p", { class: "warn", text: "no session cookie saved. chats cannot run until one is saved." });
+    if (!token.saved) {
+      return el("p", { class: "warn", text: token.notice || "no session cookie saved. chats cannot run until one is saved." });
+    }
     const check = token.check || {};
     const parts = token.parts === 2 ? "2 parts, .0 and .1" : "1 part";
     const head = `cookie saved (${parts}, ${token.masked}).`;

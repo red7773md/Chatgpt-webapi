@@ -8,6 +8,10 @@ from .records import JsonStore, utc_now
 from .session_cookie import cookie_header, mask, parse_session_cookies
 
 TOKEN_RECORD = "session/token.json"
+OLD_FORMAT_MESSAGE = (
+    "The cookie saved earlier was stored by an older version of this app and cannot be used. "
+    "Save the session cookie again."
+)
 
 
 def _empty_check() -> dict[str, Any]:
@@ -20,7 +24,8 @@ class TokenStore:
 
     async def cookies(self) -> dict[str, str] | None:
         record = await self._records.get(TOKEN_RECORD)
-        return record.get("cookies") if record else None
+        cookies = record.get("cookies") if record else None
+        return cookies if isinstance(cookies, dict) and cookies else None
 
     async def header(self) -> str | None:
         cookies = await self.cookies()
@@ -34,11 +39,15 @@ class TokenStore:
         record = await self._records.get(TOKEN_RECORD)
         if not record:
             return {"saved": False}
+        cookies = await self.cookies()
+        if cookies is None:
+            # A record from an older version has no usable cookie. Report it as not saved.
+            return {"saved": False, "notice": OLD_FORMAT_MESSAGE}
         return {
             "saved": True,
-            "masked": mask(record["cookies"]),
-            "parts": len(record["cookies"]),
-            "saved_at": record["saved_at"],
+            "masked": mask(cookies),
+            "parts": len(cookies),
+            "saved_at": record.get("saved_at"),
             "check": record.get("check") or _empty_check(),
         }
 
