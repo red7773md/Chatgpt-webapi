@@ -7,14 +7,15 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.requests import Request as StarletteRequest
 from starlette.middleware.sessions import SessionMiddleware
 
 from .chat_service import ChatService
 from .chatgpt_backend import ChatBackend, NotConnectedBackend
-from .config import Settings, load_settings
+from .config import BASE_DIR, Settings, load_settings
 from .feature_routes import chat_router
 from .mcp_tools import build_mcp
 from .records import JsonStore, register_error_handlers
@@ -24,6 +25,13 @@ from .token_store import TokenStore
 
 SESSION_COOKIE = "chatgpt_archive_session"
 SESSION_MAX_AGE = 8 * 60 * 60
+STATIC_DIR = BASE_DIR / "static"
+# Scripts and styles come only from this app. Fonts come from Google Fonts, as in the Gemini app.
+CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; "
+    "font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; "
+    "base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
+)
 
 
 class LoginIn(BaseModel):
@@ -76,6 +84,7 @@ def create_app(
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
         response = await call_next(request)
+        response.headers["Content-Security-Policy"] = CSP
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -126,6 +135,10 @@ def create_app(
 
     # ----- public ------------------------------------------------------------
 
+    @app.get("/", include_in_schema=False)
+    async def index() -> FileResponse:
+        return FileResponse(STATIC_DIR / "index.html")
+
     @app.get("/healthz")
     async def healthz() -> dict[str, bool]:
         return {"ok": True}
@@ -156,6 +169,12 @@ def create_app(
         request.session.clear()
         return {"ok": True}
 
+    @app.get("/api/auth/me")
+    async def me(request: Request) -> dict[str, Any]:
+        if request.session.get("admin"):
+            return {"logged_in": True, "username": str(request.session.get("user", ""))}
+        return {"logged_in": False}
+
     # ----- ChatGPT session token (admin only) --------------------------------
 
     @app.get("/api/session", dependencies=[admin])
@@ -174,6 +193,8 @@ def create_app(
     # ----- feature routes ----------------------------------------------------
 
     app.include_router(chat_router(chats, require_user))
+
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     # ----- MCP endpoint ------------------------------------------------------
     # Mounted last so it only answers paths nothing else claimed. Only /mcp is served.

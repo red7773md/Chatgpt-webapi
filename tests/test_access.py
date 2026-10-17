@@ -91,3 +91,26 @@ def test_mcp_refuses_a_send_when_no_token_is_saved(settings, backend):
         resp = rpc(c, "tools/call", {"name": "chatgpt_send", "arguments": {"message": "hi"}}, req_id=4).json()
     assert resp["result"]["isError"] is True
     assert "Save a session token first" in str(resp["result"]["content"])
+
+
+def test_the_page_and_its_files_are_served(client):
+    page = client.get("/")
+    assert page.status_code == 200
+    assert "CHATGPT // ARCHIVE" in page.text
+    assert "Content-Security-Policy" in page.headers
+    assert client.get("/static/app.js").status_code == 200
+    assert client.get("/static/style.css").status_code == 200
+
+
+def test_the_page_script_is_plain_and_has_no_inline_scripts(client):
+    page = client.get("/")
+    assert "<script>" not in page.text
+    js = client.get("/static/app.js").text
+    assert "innerHTML =" not in js and "insertAdjacentHTML" not in js
+
+
+def test_me_reports_the_login_state(settings, backend):
+    with TestClient(create_app(settings, backend=backend, store=MemoryStore())) as c:
+        assert c.get("/api/auth/me").json() == {"logged_in": False}
+        c.post("/api/auth/login", json={"username": ADMIN_USER, "password": ADMIN_PASS})
+        assert c.get("/api/auth/me").json() == {"logged_in": True, "username": ADMIN_USER}
