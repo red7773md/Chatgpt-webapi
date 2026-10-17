@@ -1,0 +1,20 @@
+[project]
+name = "chatgpt-webui"
+version = "0.1.0"
+description = "Single-admin ChatGPT archive: web API, MCP server, chats saved as JSON."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.143.0",
+    "uvicorn==0.54.0",
+    "httpx==0.28.1",
+    "itsdangerous==2.2.0",
+    "python-multipart==0.0.32",
+    "mcp==1.30.0",
+]
+
+[tool.uv]
+# This is an app, not a library. Vercel only needs the lock file and dependencies.
+package = false
+
+[tool.vercel]
+entrypoint = "index:app"
