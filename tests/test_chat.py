@@ -114,7 +114,7 @@ def test_sending_without_a_saved_token_is_a_409(settings, backend):
         c.post("/api/auth/login", json={"username": ADMIN_USER, "password": ADMIN_PASS})
         resp = c.post("/api/chat/send", json={"message": "hi"})
     assert resp.status_code == 409
-    assert "Save a session token first" in resp.json()["detail"]
+    assert "Save a session cookie first" in resp.json()["detail"]
 
 
 def test_list_and_delete_chats(client):

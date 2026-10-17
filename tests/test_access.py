@@ -90,7 +90,7 @@ def test_mcp_refuses_a_send_when_no_token_is_saved(settings, backend):
         rpc(c, "initialize", {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}})
         resp = rpc(c, "tools/call", {"name": "chatgpt_send", "arguments": {"message": "hi"}}, req_id=4).json()
     assert resp["result"]["isError"] is True
-    assert "Save a session token first" in str(resp["result"]["content"])
+    assert "Save a session cookie first" in str(resp["result"]["content"])
 
 
 def test_the_page_and_its_files_are_served(client):

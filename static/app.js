@@ -119,23 +119,49 @@
     return el("section", { class: "panel" }, el("h1", { class: "panel-title", text: "chatgpt // archive" }), form, noticeNode());
   }
 
+  // The line under the session heading: what is saved, and what the last check said.
+  function checkLine() {
+    const token = state.token || {};
+    if (!token.saved) return el("p", { class: "warn", text: "no session cookie saved. chats cannot run until one is saved." });
+    const check = token.check || {};
+    const parts = token.parts === 2 ? "2 parts, .0 and .1" : "1 part";
+    const head = `cookie saved (${parts}, ${token.masked}).`;
+    const when = check.checked_at ? new Date(check.checked_at).toLocaleString() : "";
+    if (check.valid === true) {
+      const who = check.account ? ` as ${check.account}` : "";
+      return el("p", { class: "ok", text: `${head} session valid${who}. checked ${when}.` });
+    }
+    if (check.valid === false) {
+      return el("p", { class: "bad", text: `${head} ${check.error || "session is not logged in."}` });
+    }
+    if (check.checked_at) {
+      const reason = (check.error || "unknown error").replace(/[.\s]+$/, "");
+      return el("p", { class: "warn", text: `${head} could not check: ${reason}. checked ${when}.` });
+    }
+    return el("p", { class: "warn", text: `${head} not checked yet. press CHECK SESSION.` });
+  }
+
+  function noticeFor(token) {
+    const check = (token && token.check) || {};
+    if (check.valid === true) return ["session valid.", "ok"];
+    if (check.valid === false) return ["session is not logged in. copy a fresh cookie and save again.", "bad"];
+    if (check.checked_at) return ["could not check the session. see the line above.", "warn"];
+    return ["cookie saved. press CHECK SESSION.", "warn"];
+  }
+
   function sessionPanel() {
     const tokenBox = el("textarea", {
       class: "field",
       id: "token-input",
-      rows: 3,
-      "aria-label": "ChatGPT session token",
-      placeholder: "paste the value of __Secure-next-auth.session-token",
+      rows: 4,
+      "aria-label": "ChatGPT session cookie",
+      placeholder: "paste __Secure-next-auth.session-token.0=... and .1=... (one per line), or the whole cookie header",
     });
-    const saved = state.token && state.token.saved;
     return el(
       "section",
       { class: "panel" },
       el("div", { class: "hint", text: "chatgpt session" }),
-      el("p", {
-        class: saved ? "ok" : "warn",
-        text: saved ? `token saved (${state.token.masked}). chats use it.` : "no token saved. chats cannot run until one is saved.",
-      }),
+      checkLine(),
       tokenBox,
       el(
         "div",
@@ -143,12 +169,30 @@
         el("button", {
           class: "btn",
           type: "button",
-          text: "[ SAVE TOKEN ]",
+          text: "[ SAVE COOKIE ]",
           onclick: async () => {
             try {
               state.token = (await api("/api/session/token", { method: "POST", body: { token: tokenBox.value } })).token;
               tokenBox.value = "";
-              setNotice("token saved.", "ok");
+              const [text, cls] = noticeFor(state.token);
+              setNotice(text, cls);
+              render();
+            } catch (err) {
+              fail(err);
+            }
+          },
+        }),
+        el("button", {
+          class: "btn",
+          type: "button",
+          text: "[ CHECK SESSION ]",
+          disabled: !(state.token && state.token.saved),
+          onclick: async () => {
+            setNotice("checking the session with chatgpt...", "dim");
+            try {
+              state.token = (await api("/api/session/check", { method: "POST" })).token;
+              const [text, cls] = noticeFor(state.token);
+              setNotice(text, cls);
               render();
             } catch (err) {
               fail(err);
@@ -158,13 +202,13 @@
         el("button", {
           class: "btn danger",
           type: "button",
-          text: "[ CLEAR TOKEN ]",
+          text: "[ CLEAR COOKIE ]",
           onclick: async () => {
-            if (!window.confirm("Remove the saved ChatGPT token from this app?")) return;
+            if (!window.confirm("Remove the saved ChatGPT session cookie from this app?")) return;
             try {
               await api("/api/session/token", { method: "DELETE" });
               state.token = { saved: false };
-              setNotice("token removed.", "warn");
+              setNotice("cookie removed.", "warn");
               render();
             } catch (err) {
               fail(err);

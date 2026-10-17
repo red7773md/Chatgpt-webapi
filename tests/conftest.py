@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.chatgpt_backend import Reply  # noqa: E402
+from app.chatgpt_backend import Reply, SessionCheck  # noqa: E402
 from app.config import Settings  # noqa: E402
 from app.main import create_app  # noqa: E402
 
@@ -46,9 +46,23 @@ class FakeChatGPT:
         self.latest_calls = 0
         self.latest_error: Exception | None = None
         self.never_names_chat = False
+        self.session_valid = True
+        self.session_unreachable: Exception | None = None
+        self.checked_headers: list[str] = []
+        self.expired_on_send = False
         self._n = 0
 
+    async def check_session(self, cookie_header):
+        self.checked_headers.append(cookie_header)
+        if self.session_unreachable is not None:
+            raise self.session_unreachable
+        return SessionCheck(valid=self.session_valid, account="Test User" if self.session_valid else None)
+
     async def send(self, token, message, model, conversation_id, on_conversation):
+        from app.chatgpt_backend import ChatGPTSessionExpired
+
+        if self.expired_on_send:
+            raise ChatGPTSessionExpired("expired")
         if self.error is not None:
             raise self.error
         self.sent_conversation_ids.append(conversation_id)

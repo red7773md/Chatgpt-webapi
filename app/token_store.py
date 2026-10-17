@@ -1,49 +1,60 @@
-"""The ChatGPT session token: saved once by the admin, masked when shown, never returned in full."""
+"""The saved ChatGPT session cookie and the result of its last check. Never returned in full."""
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
-from .records import FeatureError, JsonStore, utc_now
+from .records import JsonStore, utc_now
+from .session_cookie import cookie_header, mask, parse_session_cookies
 
 TOKEN_RECORD = "session/token.json"
-TOKEN_PATTERN = re.compile(r"^[A-Za-z0-9._~+/=%-]{20,8000}$")
 
 
-def clean_token(raw: str) -> str:
-    """Accept the bare value, or 'name=value' pasted from a cookie header."""
-    value = raw.strip()
-    if value.lower().startswith("__secure-next-auth.session-token="):
-        value = value.split("=", 1)[1]
-    value = value.split(";", 1)[0].strip()
-    if not TOKEN_PATTERN.match(value):
-        raise FeatureError(422, "That does not look like a ChatGPT session token. Copy the value of __Secure-next-auth.session-token.")
-    return value
-
-
-def mask(token: str) -> str:
-    return f"{token[:4]}…{token[-4:]}" if len(token) > 12 else "saved"
+def _empty_check() -> dict[str, Any]:
+    return {"valid": None, "account": None, "checked_at": None, "error": None}
 
 
 class TokenStore:
     def __init__(self, records: JsonStore) -> None:
         self._records = records
 
-    async def get(self) -> str | None:
+    async def cookies(self) -> dict[str, str] | None:
         record = await self._records.get(TOKEN_RECORD)
-        return record.get("token") if record else None
+        return record.get("cookies") if record else None
+
+    async def header(self) -> str | None:
+        cookies = await self.cookies()
+        return cookie_header(cookies) if cookies else None
+
+    async def check_result(self) -> dict[str, Any] | None:
+        record = await self._records.get(TOKEN_RECORD)
+        return record.get("check") if record else None
 
     async def status(self) -> dict[str, Any]:
         record = await self._records.get(TOKEN_RECORD)
         if not record:
             return {"saved": False}
-        return {"saved": True, "masked": mask(record["token"]), "saved_at": record["saved_at"]}
+        return {
+            "saved": True,
+            "masked": mask(record["cookies"]),
+            "parts": len(record["cookies"]),
+            "saved_at": record["saved_at"],
+            "check": record.get("check") or _empty_check(),
+        }
 
-    async def save(self, raw: str) -> dict[str, Any]:
-        token = clean_token(raw)
-        await self._records.put(TOKEN_RECORD, {"token": token, "saved_at": utc_now()})
-        return await self.status()
+    async def save(self, raw: str) -> None:
+        cookies = parse_session_cookies(raw)  # raises a 422 with a plain message
+        await self._records.put(
+            TOKEN_RECORD,
+            {"cookies": cookies, "saved_at": utc_now(), "check": _empty_check()},
+        )
+
+    async def record_check(self, valid: bool | None, account: str | None, error: str | None) -> None:
+        record = await self._records.get(TOKEN_RECORD)
+        if not record:
+            return
+        record["check"] = {"valid": valid, "account": account, "checked_at": utc_now(), "error": error}
+        await self._records.put(TOKEN_RECORD, record)
 
     async def clear(self) -> None:
         await self._records.delete(TOKEN_RECORD)

@@ -11,7 +11,7 @@ Both use the same chat service and the same records.
 
 ## Status
 
-Step 1 (skeleton): the REST routes, the MCP endpoint, the session token store, API key, and tests are in place. The ChatGPT client is not built yet, so sends answer 409 "not connected" after a token is saved. Step 2 adds the real client.
+Step 1 (skeleton) is in place: the REST routes, the MCP endpoint, the session cookie store with a check against ChatGPT, the API key, and tests. Sending messages to ChatGPT is not built yet; that is step 2.
 
 ## Run locally
 
@@ -35,6 +35,31 @@ DELETE /api/chat/<id>
 ```
 
 MCP client config: URL `https://<host>/mcp`, with the header `Authorization: Bearer <key>`.
+
+## Session cookie
+
+1. In Chrome, log in to chatgpt.com, open DevTools, go to Application → Cookies → `https://chatgpt.com`.
+2. Copy `__Secure-next-auth.session-token`. If the browser lists it twice, as `__Secure-next-auth.session-token.0` and `.1`, copy both values.
+3. Paste into the admin page either both as `name=value` lines, or the whole cookie header. A single unsplit value is accepted as it is. A lone `.0` is refused, because the browser always splits the cookie into both parts when it is split.
+
+Saving checks the cookie with ChatGPT at once. The page then shows one of three states:
+
+- **session valid**, with the account name and the time of the check;
+- **not logged in**, which means ChatGPT rejected the cookie; copy a fresh one and save again;
+- **could not check**, with the reason (ChatGPT blocked the request, answered an error, or could not be reached). This does not mean the cookie is bad.
+
+CHECK SESSION repeats the check. While the last check says not logged in, sends are refused with 409 and the same message.
+
+Admin-only routes (the admin login is needed; the API key is refused):
+
+```text
+GET    /api/session           -> saved?, masked value, parts, last check
+POST   /api/session/token     {"token": "..."}   -> saves, then checks
+POST   /api/session/check     -> checks the saved cookie again
+DELETE /api/session/token     -> removes it
+```
+
+Limits: ChatGPT can rotate the cookie when it is used, and this app does not save a rotated cookie yet. A cookie can therefore stop working after a while, which the next check reports as not logged in. ChatGPT may also refuse requests from the hosting provider's servers; that shows as "could not check".
 
 ## Tests
 

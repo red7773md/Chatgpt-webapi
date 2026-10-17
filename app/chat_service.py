@@ -13,8 +13,9 @@ import logging
 from typing import Any
 
 from .checks import check_is_due, error_text, seconds_since
-from .chatgpt_backend import ChatBackend, ChatGPTNotReady, Reply
+from .chatgpt_backend import ChatBackend, ChatGPTNotReady, ChatGPTSessionExpired, Reply
 from .records import FeatureError, JsonStore, new_id, utc_now
+from .session_service import EXPIRED_MESSAGE
 from .token_store import TokenStore
 
 log = logging.getLogger("chatgpt_webui")
@@ -94,9 +95,12 @@ class ChatService:
             raise FeatureError(422, "Message is empty.")
         if len(message) > MAX_MESSAGE_CHARS:
             raise FeatureError(422, f"Message is longer than {MAX_MESSAGE_CHARS} characters.")
-        token = await self._tokens.get()
-        if not token:
-            raise FeatureError(409, "ChatGPT is not connected. Save a session token first.")
+        header = await self._tokens.header()
+        if not header:
+            raise FeatureError(409, "ChatGPT is not connected. Save a session cookie first.")
+        check = await self._tokens.check_result()
+        if check and check.get("valid") is False:
+            raise FeatureError(409, EXPIRED_MESSAGE)
 
         record = await self.get_chat(chat_id) if chat_id else self._new_record(model)
         if chat_status(record) == "waiting":
@@ -113,11 +117,14 @@ class ChatService:
 
         try:
             reply = await asyncio.wait_for(
-                self._backend.send(token, message, model, known["conversation_id"], remember),
+                self._backend.send(header, message, model, known["conversation_id"], remember),
                 SEND_WAIT_SECONDS,
             )
         except asyncio.TimeoutError:
             reply = None  # ChatGPT is still writing; read it from the conversation later
+        except ChatGPTSessionExpired as exc:
+            await self._tokens.record_check(valid=False, account=None, error=EXPIRED_MESSAGE)
+            raise FeatureError(409, EXPIRED_MESSAGE) from exc
         except ChatGPTNotReady as exc:
             raise FeatureError(409, str(exc)) from exc
 
@@ -152,10 +159,13 @@ class ChatService:
         pending = record["pending"]
         cid = record["conversation_id"]
         try:
-            token = await self._tokens.get()
-            if not token:
-                raise ChatGPTNotReady("ChatGPT is not connected. Save a session token first.")
-            latest = await asyncio.wait_for(self._backend.latest_reply(token, cid), READ_TIMEOUT_SECONDS)
+            header = await self._tokens.header()
+            if not header:
+                raise ChatGPTNotReady("ChatGPT is not connected. Save a session cookie first.")
+            latest = await asyncio.wait_for(self._backend.latest_reply(header, cid), READ_TIMEOUT_SECONDS)
+        except ChatGPTSessionExpired as exc:
+            await self._tokens.record_check(valid=False, account=None, error=EXPIRED_MESSAGE)
+            return await self._record_check_failure(record, exc)
         except (ChatGPTNotReady, asyncio.TimeoutError, OSError) as exc:
             return await self._record_check_failure(record, exc)
 

@@ -14,11 +14,13 @@ from starlette.requests import Request as StarletteRequest
 from starlette.middleware.sessions import SessionMiddleware
 
 from .chat_service import ChatService
-from .chatgpt_backend import ChatBackend, NotConnectedBackend
+from .chatgpt_backend import ChatBackend
+from .chatgpt_web import ChatGPTWebBackend
 from .config import BASE_DIR, Settings, load_settings
 from .feature_routes import chat_router
 from .mcp_tools import build_mcp
 from .records import JsonStore, register_error_handlers
+from .session_service import SessionService
 from .security import LoginThrottle, credentials_match
 from .storage import BlobStore, KeyValueStore, LocalFileStore
 from .token_store import TokenStore
@@ -40,7 +42,7 @@ class LoginIn(BaseModel):
 
 
 class TokenIn(BaseModel):
-    token: str = Field(min_length=1, max_length=8200)
+    token: str = Field(min_length=1, max_length=20000)  # the cookie, or both of its parts
 
 
 def _client_key(request: Request, behind_proxy: bool) -> str:
@@ -61,7 +63,9 @@ def create_app(
         store = BlobStore(settings.blob_token) if settings.blob_token else LocalFileStore(settings.data_dir)
     records = JsonStore(store)
     tokens = TokenStore(records)
-    chats = ChatService(backend or NotConnectedBackend(), records, tokens)
+    chatgpt = backend or ChatGPTWebBackend()
+    sessions = SessionService(chatgpt, tokens)
+    chats = ChatService(chatgpt, records, tokens)
     throttle = LoginThrottle()
     mcp = build_mcp(chats)
 
@@ -183,7 +187,12 @@ def create_app(
 
     @app.post("/api/session/token", dependencies=[admin])
     async def save_token(body: TokenIn) -> dict[str, Any]:
-        return {"token": await tokens.save(body.token)}
+        """Save the cookie, then check it with ChatGPT straight away."""
+        return {"token": await sessions.save(body.token)}
+
+    @app.post("/api/session/check", dependencies=[admin])
+    async def check_token() -> dict[str, Any]:
+        return {"token": await sessions.check()}
 
     @app.delete("/api/session/token", dependencies=[admin])
     async def clear_token() -> dict[str, bool]:
